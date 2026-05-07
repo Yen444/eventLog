@@ -6,9 +6,9 @@ from pathlib import Path
 import pandas as pd
 import pm4py
 
-ACTIVITY_COLUMN = "concept:name"
-TIME_COLUMN = "time:timestamp"
-CASE_ID_COLUMN = "case:concept:name"
+DEFAULT_ACTIVITY_COLUMN = "concept:name"
+DEFAULT_TIME_COLUMN = "time:timestamp"
+DEFAULT_CASE_ID_COLUMN = "case:concept:name"
 DISCOVERY_ALGORITHM = "Inductive Miner"
 DEFAULT_NOISE_THRESHOLD = 0.2
 SLIDE_LAYOUT_DIRECTION = "LR"
@@ -29,6 +29,21 @@ def parse_args() -> argparse.Namespace:
         type=float,
         default=DEFAULT_NOISE_THRESHOLD,
         help="Noise threshold for inductive discovery. Higher values typically simplify the discovered model.",
+    )
+    parser.add_argument(
+        "--case-id",
+        default=DEFAULT_CASE_ID_COLUMN,
+        help=f"Column name to use as the case identifier. Defaults to '{DEFAULT_CASE_ID_COLUMN}'.",
+    )
+    parser.add_argument(
+        "--activity",
+        default=DEFAULT_ACTIVITY_COLUMN,
+        help=f"Column name to use as the activity label. Defaults to '{DEFAULT_ACTIVITY_COLUMN}'.",
+    )
+    parser.add_argument(
+        "--timestamp",
+        default=DEFAULT_TIME_COLUMN,
+        help=f"Column name to use as the event timestamp. Defaults to '{DEFAULT_TIME_COLUMN}'.",
     )
     parser.add_argument(
         "--use-activity-codes",
@@ -62,16 +77,28 @@ def build_model_run_name(noise_threshold: float) -> str:
     return f"noise_{format_noise_threshold(noise_threshold)}"
 
 
-def validate_required_columns(df: pd.DataFrame) -> None:
-    required_columns = [CASE_ID_COLUMN, ACTIVITY_COLUMN, TIME_COLUMN]
+def validate_required_columns(
+    df: pd.DataFrame,
+    case_id_column: str,
+    activity_column: str,
+    time_column: str,
+) -> None:
+    required_columns = [case_id_column, activity_column, time_column]
     missing = [column for column in required_columns if column not in df.columns]
     if missing:
         raise ValueError(f"Missing required columns: {', '.join(missing)}")
 
 
-def prepare_process_mining_dataframe(df: pd.DataFrame) -> pd.DataFrame:
+def prepare_process_mining_dataframe(
+    df: pd.DataFrame,
+    case_id_column: str,
+    activity_column: str,
+    time_column: str,
+) -> pd.DataFrame:
     working_df = df.copy()
-    working_df[TIME_COLUMN] = pd.to_datetime(working_df[TIME_COLUMN], utc=True, errors="coerce")
+    working_df[DEFAULT_CASE_ID_COLUMN] = working_df[case_id_column].astype(str)
+    working_df[DEFAULT_ACTIVITY_COLUMN] = working_df[activity_column].astype(str)
+    working_df[DEFAULT_TIME_COLUMN] = pd.to_datetime(working_df[time_column], utc=True, errors="coerce")
     return working_df
 
 
@@ -86,17 +113,21 @@ def generate_activity_code(index: int) -> str:
         current -= 1
 
 
-def build_activity_code_mapping(df: pd.DataFrame) -> dict[str, str]:
-    unique_activities = pd.Series(df[ACTIVITY_COLUMN]).dropna().astype(str).drop_duplicates().tolist()
+def build_activity_code_mapping(df: pd.DataFrame, activity_column: str) -> dict[str, str]:
+    unique_activities = pd.Series(df[activity_column]).dropna().astype(str).drop_duplicates().tolist()
     return {
         activity: generate_activity_code(index)
         for index, activity in enumerate(unique_activities)
     }
 
 
-def apply_activity_codes(df: pd.DataFrame, activity_code_map: dict[str, str]) -> pd.DataFrame:
+def apply_activity_codes(
+    df: pd.DataFrame,
+    activity_column: str,
+    activity_code_map: dict[str, str],
+) -> pd.DataFrame:
     coded_df = df.copy()
-    coded_df[ACTIVITY_COLUMN] = coded_df[ACTIVITY_COLUMN].map(
+    coded_df[activity_column] = coded_df[activity_column].map(
         lambda value: activity_code_map.get(str(value), str(value)) if pd.notna(value) else value
     )
     return coded_df
@@ -124,6 +155,8 @@ def write_report(
     event_log_path: Path,
     model_run_name: str,
     case_id_column: str,
+    activity_column: str,
+    time_column: str,
     noise_threshold: float,
     use_activity_codes: bool,
     mapping_txt_path: Path,
@@ -151,8 +184,8 @@ def write_report(
         f"Source event log file: {event_log_path}",
         f"Process model run name: {model_run_name}",
         f"Case ID column: {case_id_column}",
-        f"Activity column: {ACTIVITY_COLUMN}",
-        f"Time column: {TIME_COLUMN}",
+        f"Activity column: {activity_column}",
+        f"Time column: {time_column}",
         f"Discovery algorithm: {DISCOVERY_ALGORITHM}",
         f"Noise threshold: {noise_threshold}",
         f"Presentation layout direction: {SLIDE_LAYOUT_DIRECTION}",
@@ -240,13 +273,13 @@ def main() -> None:
     model_run_name = build_model_run_name(args.noise_threshold)
 
     df = load_event_log_as_dataframe(event_log_path)
-    validate_required_columns(df)
-    working_df = prepare_process_mining_dataframe(df)
+    validate_required_columns(df, args.case_id, args.activity, args.timestamp)
+    working_df = prepare_process_mining_dataframe(df, args.case_id, args.activity, args.timestamp)
     mapping_txt_path = output_dir / f"activity_code_mapping_{model_run_name}.txt"
     mapping_csv_path = output_dir / f"activity_code_mapping_{model_run_name}.csv"
     if args.use_activity_codes:
-        activity_code_map = build_activity_code_mapping(working_df)
-        working_df = apply_activity_codes(working_df, activity_code_map)
+        activity_code_map = build_activity_code_mapping(working_df, DEFAULT_ACTIVITY_COLUMN)
+        working_df = apply_activity_codes(working_df, DEFAULT_ACTIVITY_COLUMN, activity_code_map)
         mapping_txt_path, mapping_csv_path = write_activity_code_files(
             mapping_txt_path,
             mapping_csv_path,
@@ -256,23 +289,23 @@ def main() -> None:
     process_tree = pm4py.discover_process_tree_inductive(
         working_df,
         noise_threshold=args.noise_threshold,
-        activity_key=ACTIVITY_COLUMN,
-        timestamp_key=TIME_COLUMN,
-        case_id_key=CASE_ID_COLUMN,
+        activity_key=DEFAULT_ACTIVITY_COLUMN,
+        timestamp_key=DEFAULT_TIME_COLUMN,
+        case_id_key=DEFAULT_CASE_ID_COLUMN,
     )
     bpmn_model = pm4py.discover_bpmn_inductive(
         working_df,
         noise_threshold=args.noise_threshold,
-        activity_key=ACTIVITY_COLUMN,
-        timestamp_key=TIME_COLUMN,
-        case_id_key=CASE_ID_COLUMN,
+        activity_key=DEFAULT_ACTIVITY_COLUMN,
+        timestamp_key=DEFAULT_TIME_COLUMN,
+        case_id_key=DEFAULT_CASE_ID_COLUMN,
     )
     petri_net, initial_marking, final_marking = pm4py.discover_petri_net_inductive(
         working_df,
         noise_threshold=args.noise_threshold,
-        activity_key=ACTIVITY_COLUMN,
-        timestamp_key=TIME_COLUMN,
-        case_id_key=CASE_ID_COLUMN,
+        activity_key=DEFAULT_ACTIVITY_COLUMN,
+        timestamp_key=DEFAULT_TIME_COLUMN,
+        case_id_key=DEFAULT_CASE_ID_COLUMN,
     )
 
     bpmn_path = output_dir / f"process_model_{model_run_name}.bpmn"
@@ -301,7 +334,9 @@ def main() -> None:
         report_path,
         event_log_path,
         model_run_name,
-        CASE_ID_COLUMN,
+        args.case_id,
+        args.activity,
+        args.timestamp,
         args.noise_threshold,
         args.use_activity_codes,
         mapping_txt_path,
