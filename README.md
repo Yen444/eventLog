@@ -1,6 +1,6 @@
 # Event Log Analysis Toolkit
 
-This repository contains small command-line scripts for inspecting XES event logs, converting them to CSV, running basic and advanced analyses, previewing CSV output, and discovering process models with pm4py.
+This repository contains small command-line scripts for inspecting XES or CSV event logs, saving normalized CSV output, running basic and advanced analyses, previewing logs, and discovering process models with pm4py.
 
 ## Setup
 
@@ -14,7 +14,7 @@ Run scripts with `uv run python` from the repository root.
 
 ## Repository Layout
 
-- `logs/`: real input event logs, for example `.xes` files.
+- `logs/`: real input event logs, for example `.xes` or `.csv` files.
 - `results/`: generated outputs from analysis, preview preparation, and process-model discovery.
 - Repository root: Python scripts, dependency files, and documentation.
 
@@ -22,16 +22,22 @@ Run scripts with `uv run python` from the repository root.
 
 ### 1. Basic Analysis
 
-Use this when you want an initial overview of an XES event log and distribution charts for selected attributes.
+Use this when you want an initial overview of an XES or CSV event log and distribution charts for selected attributes.
 
 ```powershell
 uv run python basic_analysis.py "logs/RequestForPayment.xes" --case-id "case:concept:name"
 ```
 
+CSV input works the same way:
+
+```powershell
+uv run python basic_analysis.py "logs/BPIChallenge2019_3WayMatchingEC.csv" --case-id "case:concept:name"
+```
+
 What it does:
 
-- Reads an XES event log.
-- Converts the log to a CSV file.
+- Reads an XES or CSV event log.
+- Saves a CSV output file. For XES input this is the converted log; for CSV input this is a copied/normalized analysis CSV.
 - Prints the first rows of the dataset.
 - Prints all available columns.
 - Counts total cases, total events, and total attributes.
@@ -49,7 +55,7 @@ Parameters:
 
 | Parameter | Required | Default | Description |
 | --- | --- | --- | --- |
-| `xes_path` | Yes | None | Path to the input `.xes` event log. |
+| `event_log_path` | Yes | None | Path to the input `.xes` or `.csv` event log. |
 | `--output-dir` | No | `results/<xes file stem>_analysis` | Directory where all basic-analysis outputs are saved. |
 | `--csv-output` | No | `<output-dir>/<xes file stem>.csv` | Custom path for the converted CSV file. |
 | `--head` | No | `5` | Number of rows to print during the initial inspection preview. |
@@ -78,15 +84,21 @@ uv run python basic_analysis.py "logs/RequestForPayment.xes" `
 
 ### 2. Advanced Analysis
 
-Use this when you need process-mining-oriented metrics such as trace variants, case arrivals, case timing, and cycle-time distributions.
+Use this when you need process-mining-oriented metrics such as trace variants, case arrivals, case timing, and cycle-time distributions from an XES or CSV event log.
 
 ```powershell
 uv run python advanced_analysis.py "logs/RequestForPayment.xes"
 ```
 
+CSV input works the same way when the required event-log columns are present:
+
+```powershell
+uv run python advanced_analysis.py "logs/BPIChallenge2019_3WayMatchingEC.csv"
+```
+
 What it does:
 
-- Reads an XES event log.
+- Reads an XES or CSV event log.
 - Automatically finds the case identifier column from `case:concept:name` or `concept:name`.
 - Builds trace variants from each case's ordered activity sequence.
 - Calculates trace-variant frequency, percentage, and variant length.
@@ -110,7 +122,7 @@ Parameters:
 
 | Parameter | Required | Default | Description |
 | --- | --- | --- | --- |
-| `xes_path` | Yes | None | Path to the input `.xes` event log. |
+| `event_log_path` | Yes | None | Path to the input `.xes` or `.csv` event log. |
 | `--output-dir` | No | `results/<xes file stem>_advanced_analysis` | Directory where all advanced-analysis outputs are saved. |
 | `--top-variants` | No | `20` | Number of most frequent trace variants to show in the trace-variant visualization. |
 
@@ -122,17 +134,23 @@ uv run python advanced_analysis.py "logs/Sepsis Cases - Event Log.xes" `
   --top-variants 15
 ```
 
-### 3. Preview CSV Log
+### 3. Preview Event Log
 
-Use this after basic analysis has produced a CSV, or whenever you want a compact table preview suitable for screenshots or quick inspection.
+Use this whenever you want a compact XES or CSV table preview suitable for screenshots or quick inspection.
 
 ```powershell
 uv run python preview_csv.py "results/RequestForPayment_analysis/RequestForPayment.csv"
 ```
 
+You can also preview a raw XES log directly:
+
+```powershell
+uv run python preview_csv.py "logs/RequestForPayment.xes"
+```
+
 What it does:
 
-- Reads a CSV file.
+- Reads an XES or CSV event log.
 - Selects useful event-log columns by default when they exist.
 - Prints a clean, fixed-width table in the terminal.
 - Truncates long cell values so the preview remains readable.
@@ -151,7 +169,7 @@ Parameters:
 
 | Parameter | Required | Default | Description |
 | --- | --- | --- | --- |
-| `csv_path` | Yes | None | Path to the CSV file to preview. |
+| `event_log_path` | Yes | None | Path to the `.xes` or `.csv` event log to preview. |
 | `--rows` | No | `8` | Number of rows to print. |
 | `--columns` | No | Default event-log columns when available; otherwise first six columns | Space-separated list of specific columns to show. |
 | `--max-width` | No | `28` | Maximum width of each cell before truncation. |
@@ -167,15 +185,21 @@ uv run python preview_csv.py "results/RequestForPayment_analysis/RequestForPayme
 
 ### 4. Create Process Model
 
-Use this when you want to discover and export a BPMN model, process tree, and Petri net from an XES event log.
+Use this when you want to discover and export a BPMN model, process tree, and Petri net from an XES or CSV event log.
 
 ```powershell
 uv run python process_model.py "logs/RequestForPayment.xes"
 ```
 
+CSV input works the same way when the required process-mining columns are present:
+
+```powershell
+uv run python process_model.py "logs/BPIChallenge2019_3WayMatchingEC.csv"
+```
+
 What it does:
 
-- Reads an XES event log.
+- Reads an XES or CSV event log.
 - Requires these columns:
   - `case:concept:name`
   - `concept:name`
@@ -186,27 +210,30 @@ What it does:
 - Exports each model in a machine-readable format.
 - Exports PNG and SVG visualizations for each model.
 - Optionally replaces long activity labels with short codes such as `A`, `B`, and `C`.
+- Adds the noise threshold to process-model artifact names, for example `noise_0_2`.
 - Saves a process-model report with model settings, artifact paths, and summary counts.
 
 Outputs:
 
-- `process_model_report.txt`.
-- `process_model.bpmn`.
-- `bpmn_model.png`.
-- `bpmn_model.svg`.
-- `process_tree.ptml`.
-- `process_tree.png`.
-- `process_tree.svg`.
-- `petri_net.pnml`.
-- `petri_net.png`.
-- `petri_net.svg`.
-- `activity_code_mapping.txt` and `activity_code_mapping.csv` when activity codes are enabled.
+- `process_model_report_noise_<threshold>.txt`.
+- `process_model_noise_<threshold>.bpmn`.
+- `bpmn_model_noise_<threshold>.png`.
+- `bpmn_model_noise_<threshold>.svg`.
+- `process_tree_noise_<threshold>.ptml`.
+- `process_tree_noise_<threshold>.png`.
+- `process_tree_noise_<threshold>.svg`.
+- `petri_net_noise_<threshold>.pnml`.
+- `petri_net_noise_<threshold>.png`.
+- `petri_net_noise_<threshold>.svg`.
+- `activity_code_mapping_noise_<threshold>.txt` and `activity_code_mapping_noise_<threshold>.csv` when activity codes are enabled.
+
+For example, `--noise-threshold 0.2` creates files with `noise_0_2` in their names.
 
 Parameters:
 
 | Parameter | Required | Default | Description |
 | --- | --- | --- | --- |
-| `xes_path` | Yes | None | Path to the input `.xes` event log. |
+| `event_log_path` | Yes | None | Path to the input `.xes` or `.csv` event log. |
 | `--output-dir` | No | `results/<xes file stem>_process_model` | Directory where all process-model outputs are saved. |
 | `--noise-threshold` | No | `0.2` | Noise threshold for Inductive Miner. Higher values usually produce simpler models. |
 | `--use-activity-codes` | No | `false` | Use `true` to replace activity names with short codes in exported models and images. |
@@ -229,7 +256,7 @@ uv run python process_model.py "logs/Sepsis Cases - Event Log.xes" `
 
 ## Suggested Workflow
 
-1. Run basic analysis to convert the XES file to CSV and inspect columns.
+1. Run basic analysis to save a CSV output and inspect columns.
 2. Preview the generated CSV when you need a compact table view.
 3. Run advanced analysis to study trace variants, arrivals, and cycle times.
 4. Create the process model when the log structure is clear and the required columns are available.

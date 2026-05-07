@@ -16,9 +16,9 @@ MAX_PLOT_VALUES = 20
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Convert an XES event log to CSV and run basic exploratory analysis."
+        description="Load an XES or CSV event log and run basic exploratory analysis."
     )
-    parser.add_argument("xes_path", type=Path, help="Path to the input XES file.")
+    parser.add_argument("event_log_path", type=Path, help="Path to the input XES or CSV event log.")
     parser.add_argument(
         "--output-dir",
         type=Path,
@@ -53,10 +53,14 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def load_xes_as_dataframe(xes_path: Path) -> pd.DataFrame:
-    log = read_xes(str(xes_path))
-    df = convert_to_dataframe(log)
-    return df
+def load_event_log_as_dataframe(event_log_path: Path) -> pd.DataFrame:
+    suffix = event_log_path.suffix.lower()
+    if suffix == ".xes":
+        log = read_xes(str(event_log_path))
+        return convert_to_dataframe(log)
+    if suffix == ".csv":
+        return pd.read_csv(event_log_path)
+    raise ValueError(f"Unsupported event log format: {event_log_path.suffix}. Use .xes or .csv.")
 
 
 def save_csv(df: pd.DataFrame, output_path: Path) -> None:
@@ -145,19 +149,19 @@ def sanitize_name(value: str) -> str:
     return safe.strip("_") or "attribute"
 
 
-def resolve_output_dir(xes_path: Path, output_dir: Path | None) -> Path:
+def resolve_output_dir(event_log_path: Path, output_dir: Path | None) -> Path:
     if output_dir is not None:
         return output_dir
-    return Path("results") / f"{xes_path.stem}_analysis"
+    return Path("results") / f"{event_log_path.stem}_analysis"
 
 
-def resolve_csv_output(xes_path: Path, output_dir: Path, csv_output: Path | None) -> Path:
+def resolve_csv_output(event_log_path: Path, output_dir: Path, csv_output: Path | None) -> Path:
     if csv_output is not None:
         return csv_output
-    return output_dir / f"{xes_path.stem}.csv"
+    return output_dir / f"{event_log_path.stem}.csv"
 
 
-def resolve_report_output(xes_path: Path, output_dir: Path, report_output: Path | None) -> Path:
+def resolve_report_output(event_log_path: Path, output_dir: Path, report_output: Path | None) -> Path:
     if report_output is not None:
         return report_output
     return output_dir / "analysis_report.txt"
@@ -205,7 +209,7 @@ def create_distribution_plots(df: pd.DataFrame, attributes: list[str], images_di
 
 def write_analysis_report(
     report_path: Path,
-    xes_path: Path,
+    event_log_path: Path,
     csv_output: Path,
     case_id_column: str,
     attributes: list[str],
@@ -213,8 +217,8 @@ def write_analysis_report(
     image_paths: dict[str, Path],
 ) -> None:
     lines = [
-        f"Source XES file: {xes_path}",
-        f"Converted CSV file: {csv_output}",
+        f"Source event log file: {event_log_path}",
+        f"CSV output file: {csv_output}",
         f"Selected case_id column: {case_id_column}",
         f"Attributes analyzed: {', '.join(attributes)}",
         f"Visualization folder: {next(iter(image_paths.values())).parent if image_paths else report_path.parent / 'visualizations'}",
@@ -235,19 +239,19 @@ def write_analysis_report(
 
 def main() -> None:
     args = parse_args()
-    xes_path = args.xes_path
-    if not xes_path.exists():
-        raise FileNotFoundError(f"XES file not found: {xes_path}")
+    event_log_path = args.event_log_path
+    if not event_log_path.exists():
+        raise FileNotFoundError(f"Event log file not found: {event_log_path}")
 
-    df = load_xes_as_dataframe(xes_path)
-    output_dir = resolve_output_dir(xes_path, args.output_dir)
+    df = load_event_log_as_dataframe(event_log_path)
+    output_dir = resolve_output_dir(event_log_path, args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     images_dir = resolve_images_dir(output_dir)
-    csv_output = resolve_csv_output(xes_path, output_dir, args.csv_output)
-    report_output = resolve_report_output(xes_path, output_dir, args.report_output)
+    csv_output = resolve_csv_output(event_log_path, output_dir, args.csv_output)
+    report_output = resolve_report_output(event_log_path, output_dir, args.report_output)
     save_csv(df, csv_output)
 
-    print(f"Converted '{xes_path}' to '{csv_output}'.")
+    print(f"Saved CSV output for '{event_log_path}' to '{csv_output}'.")
     print(f"All analysis artifacts will be saved in '{output_dir}'.")
     print_head(df, args.head)
     print_columns(df.columns.tolist())
@@ -269,7 +273,7 @@ def main() -> None:
     print_distribution_images(image_paths)
     write_analysis_report(
         report_output,
-        xes_path,
+        event_log_path,
         csv_output,
         case_id_column,
         attributes,

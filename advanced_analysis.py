@@ -6,7 +6,7 @@ from pathlib import Path
 
 import matplotlib
 import pandas as pd
-from pm4py import read_xes
+from pm4py import convert_to_dataframe, read_xes
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -19,9 +19,9 @@ DEFAULT_TOP_VARIANTS = 20
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Run advanced analysis on an XES event log."
+        description="Run advanced analysis on an XES or CSV event log."
     )
-    parser.add_argument("xes_path", type=Path, help="Path to the input XES file.")
+    parser.add_argument("event_log_path", type=Path, help="Path to the input XES or CSV event log.")
     parser.add_argument(
         "--output-dir",
         type=Path,
@@ -41,10 +41,20 @@ def sanitize_name(value: str) -> str:
     return safe.strip("_") or "output"
 
 
-def resolve_output_dir(xes_path: Path, output_dir: Path | None) -> Path:
+def load_event_log_as_dataframe(event_log_path: Path) -> pd.DataFrame:
+    suffix = event_log_path.suffix.lower()
+    if suffix == ".xes":
+        log = read_xes(str(event_log_path))
+        return convert_to_dataframe(log)
+    if suffix == ".csv":
+        return pd.read_csv(event_log_path)
+    raise ValueError(f"Unsupported event log format: {event_log_path.suffix}. Use .xes or .csv.")
+
+
+def resolve_output_dir(event_log_path: Path, output_dir: Path | None) -> Path:
     if output_dir is not None:
         return output_dir
-    return Path("results") / f"{xes_path.stem}_advanced_analysis"
+    return Path("results") / f"{event_log_path.stem}_advanced_analysis"
 
 
 def resolve_images_dir(output_dir: Path) -> Path:
@@ -63,6 +73,12 @@ def resolve_case_id_column(df: pd.DataFrame) -> str:
         "Could not find a case identifier column. Expected one of: "
         + ", ".join(CASE_ID_CANDIDATES)
     )
+
+
+def validate_required_columns(df: pd.DataFrame, columns: list[str]) -> None:
+    missing = [column for column in columns if column not in df.columns]
+    if missing:
+        raise ValueError(f"Missing required columns: {', '.join(missing)}")
 
 
 def analyze_log(df: pd.DataFrame, case_id_column: str) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
@@ -282,7 +298,7 @@ def build_cycle_time_lines(case_times_df: pd.DataFrame) -> list[str]:
 
 def write_report(
     report_path: Path,
-    xes_path: Path,
+    event_log_path: Path,
     case_id_column: str,
     tables: dict[str, Path],
     images: dict[str, Path],
@@ -290,7 +306,7 @@ def write_report(
     case_times_df: pd.DataFrame,
 ) -> None:
     lines = [
-        f"Source XES file: {xes_path}",
+        f"Source event log file: {event_log_path}",
         f"Case ID column: {case_id_column}",
         f"Activity column: {ACTIVITY_COLUMN}",
         f"Time column: {TIME_COLUMN}",
@@ -320,17 +336,18 @@ def write_report(
 
 def main() -> None:
     args = parse_args()
-    xes_path = args.xes_path
-    if not xes_path.exists():
-        raise FileNotFoundError(f"XES file not found: {xes_path}")
+    event_log_path = args.event_log_path
+    if not event_log_path.exists():
+        raise FileNotFoundError(f"Event log file not found: {event_log_path}")
 
-    output_dir = resolve_output_dir(xes_path, args.output_dir)
+    output_dir = resolve_output_dir(event_log_path, args.output_dir)
     images_dir = resolve_images_dir(output_dir)
     tables_dir = resolve_tables_dir(output_dir)
     report_path = output_dir / "advanced_analysis_report.txt"
 
-    log_df = read_xes(str(xes_path))
+    log_df = load_event_log_as_dataframe(event_log_path)
     case_id_column = resolve_case_id_column(log_df)
+    validate_required_columns(log_df, [case_id_column, ACTIVITY_COLUMN, TIME_COLUMN])
     variants_df, case_variants_df, case_times_df = analyze_log(log_df, case_id_column)
 
     table_paths = save_tables(variants_df, case_variants_df, case_times_df, tables_dir)
@@ -339,9 +356,9 @@ def main() -> None:
         "case_arrivals": plot_case_arrivals(case_times_df, images_dir),
         "cycle_time_distribution": plot_cycle_time_distribution(case_times_df, images_dir),
     }
-    write_report(report_path, xes_path, case_id_column, table_paths, image_paths, variants_df, case_times_df)
+    write_report(report_path, event_log_path, case_id_column, table_paths, image_paths, variants_df, case_times_df)
 
-    print(f"Advanced analysis completed for '{xes_path}'.")
+    print(f"Advanced analysis completed for '{event_log_path}'.")
     print(f"Outputs saved in '{output_dir}'.")
     print(f"Case ID column used: '{case_id_column}'")
     print(f"Report: '{report_path}'")

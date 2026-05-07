@@ -4,6 +4,7 @@ import argparse
 from pathlib import Path
 
 import pandas as pd
+from pm4py import convert_to_dataframe, read_xes
 
 DEFAULT_COLUMNS = [
     "case:concept:name",
@@ -16,9 +17,9 @@ DEFAULT_COLUMNS = [
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Print a clean CSV preview suitable for screenshots."
+        description="Print a clean XES or CSV event-log preview suitable for screenshots."
     )
-    parser.add_argument("csv_path", type=Path, help="Path to the CSV file to preview.")
+    parser.add_argument("event_log_path", type=Path, help="Path to the XES or CSV event log to preview.")
     parser.add_argument(
         "--rows",
         type=int,
@@ -37,6 +38,16 @@ def parse_args() -> argparse.Namespace:
         help="Maximum width per cell before truncation.",
     )
     return parser.parse_args()
+
+
+def load_event_log_as_dataframe(event_log_path: Path) -> pd.DataFrame:
+    suffix = event_log_path.suffix.lower()
+    if suffix == ".xes":
+        log = read_xes(str(event_log_path))
+        return convert_to_dataframe(log)
+    if suffix == ".csv":
+        return pd.read_csv(event_log_path)
+    raise ValueError(f"Unsupported event log format: {event_log_path.suffix}. Use .xes or .csv.")
 
 
 def pick_columns(df: pd.DataFrame, requested: list[str] | None) -> list[str]:
@@ -84,14 +95,14 @@ def build_table(df: pd.DataFrame, columns: list[str], rows: int, max_width: int)
 
 def main() -> None:
     args = parse_args()
-    if not args.csv_path.exists():
-        raise FileNotFoundError(f"CSV file not found: {args.csv_path}")
+    if not args.event_log_path.exists():
+        raise FileNotFoundError(f"Event log file not found: {args.event_log_path}")
 
-    df = pd.read_csv(args.csv_path)
+    df = load_event_log_as_dataframe(args.event_log_path)
     columns = pick_columns(df, args.columns)
     table = build_table(df, columns, args.rows, args.max_width)
 
-    print(f"CSV preview: {args.csv_path}")
+    print(f"Event log preview: {args.event_log_path}")
     print(f"Rows shown: {min(args.rows, len(df))} of {len(df)}")
     print(f"Columns shown: {', '.join(columns)}")
     print()

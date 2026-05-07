@@ -16,9 +16,9 @@ SLIDE_LAYOUT_DIRECTION = "LR"
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Discover a process model from an XES event log using pm4py."
+        description="Discover a process model from an XES or CSV event log using pm4py."
     )
-    parser.add_argument("xes_path", type=Path, help="Path to the input XES file.")
+    parser.add_argument("event_log_path", type=Path, help="Path to the input XES or CSV event log.")
     parser.add_argument(
         "--output-dir",
         type=Path,
@@ -39,10 +39,27 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def resolve_output_dir(xes_path: Path, output_dir: Path | None) -> Path:
+def load_event_log_as_dataframe(event_log_path: Path) -> pd.DataFrame:
+    suffix = event_log_path.suffix.lower()
+    if suffix == ".xes":
+        return pm4py.read_xes(str(event_log_path))
+    if suffix == ".csv":
+        return pd.read_csv(event_log_path)
+    raise ValueError(f"Unsupported event log format: {event_log_path.suffix}. Use .xes or .csv.")
+
+
+def resolve_output_dir(event_log_path: Path, output_dir: Path | None) -> Path:
     if output_dir is not None:
         return output_dir
-    return Path("results") / f"{xes_path.stem}_process_model"
+    return Path("results") / f"{event_log_path.stem}_process_model"
+
+
+def format_noise_threshold(value: float) -> str:
+    return str(value).replace(".", "_").replace("-", "minus_")
+
+
+def build_model_run_name(noise_threshold: float) -> str:
+    return f"noise_{format_noise_threshold(noise_threshold)}"
 
 
 def validate_required_columns(df: pd.DataFrame) -> None:
@@ -50,6 +67,12 @@ def validate_required_columns(df: pd.DataFrame) -> None:
     missing = [column for column in required_columns if column not in df.columns]
     if missing:
         raise ValueError(f"Missing required columns: {', '.join(missing)}")
+
+
+def prepare_process_mining_dataframe(df: pd.DataFrame) -> pd.DataFrame:
+    working_df = df.copy()
+    working_df[TIME_COLUMN] = pd.to_datetime(working_df[TIME_COLUMN], utc=True, errors="coerce")
+    return working_df
 
 
 def generate_activity_code(index: int) -> str:
@@ -79,10 +102,11 @@ def apply_activity_codes(df: pd.DataFrame, activity_code_map: dict[str, str]) ->
     return coded_df
 
 
-def write_activity_code_files(output_dir: Path, activity_code_map: dict[str, str]) -> tuple[Path, Path]:
-    txt_path = output_dir / "activity_code_mapping.txt"
-    csv_path = output_dir / "activity_code_mapping.csv"
-
+def write_activity_code_files(
+    txt_path: Path,
+    csv_path: Path,
+    activity_code_map: dict[str, str],
+) -> tuple[Path, Path]:
     lines = ["Activity code mapping:"]
     for activity, code in activity_code_map.items():
         lines.append(f"- {code}: {activity}")
@@ -97,7 +121,8 @@ def write_activity_code_files(output_dir: Path, activity_code_map: dict[str, str
 
 def write_report(
     report_path: Path,
-    xes_path: Path,
+    event_log_path: Path,
+    model_run_name: str,
     case_id_column: str,
     noise_threshold: float,
     use_activity_codes: bool,
@@ -123,7 +148,8 @@ def write_report(
     bpmn_flow_count = len(bpmn_model.get_flows())
 
     lines = [
-        f"Source XES file: {xes_path}",
+        f"Source event log file: {event_log_path}",
+        f"Process model run name: {model_run_name}",
         f"Case ID column: {case_id_column}",
         f"Activity column: {ACTIVITY_COLUMN}",
         f"Time column: {TIME_COLUMN}",
@@ -205,22 +231,27 @@ def export_petri_net(
 
 def main() -> None:
     args = parse_args()
-    xes_path = args.xes_path
-    if not xes_path.exists():
-        raise FileNotFoundError(f"XES file not found: {xes_path}")
+    event_log_path = args.event_log_path
+    if not event_log_path.exists():
+        raise FileNotFoundError(f"Event log file not found: {event_log_path}")
 
-    output_dir = resolve_output_dir(xes_path, args.output_dir)
+    output_dir = resolve_output_dir(event_log_path, args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
+    model_run_name = build_model_run_name(args.noise_threshold)
 
-    df = pm4py.read_xes(str(xes_path))
+    df = load_event_log_as_dataframe(event_log_path)
     validate_required_columns(df)
-    working_df = df
-    mapping_txt_path = output_dir / "activity_code_mapping.txt"
-    mapping_csv_path = output_dir / "activity_code_mapping.csv"
+    working_df = prepare_process_mining_dataframe(df)
+    mapping_txt_path = output_dir / f"activity_code_mapping_{model_run_name}.txt"
+    mapping_csv_path = output_dir / f"activity_code_mapping_{model_run_name}.csv"
     if args.use_activity_codes:
-        activity_code_map = build_activity_code_mapping(df)
-        working_df = apply_activity_codes(df, activity_code_map)
-        mapping_txt_path, mapping_csv_path = write_activity_code_files(output_dir, activity_code_map)
+        activity_code_map = build_activity_code_mapping(working_df)
+        working_df = apply_activity_codes(working_df, activity_code_map)
+        mapping_txt_path, mapping_csv_path = write_activity_code_files(
+            mapping_txt_path,
+            mapping_csv_path,
+            activity_code_map,
+        )
 
     process_tree = pm4py.discover_process_tree_inductive(
         working_df,
@@ -244,16 +275,16 @@ def main() -> None:
         case_id_key=CASE_ID_COLUMN,
     )
 
-    bpmn_path = output_dir / "process_model.bpmn"
-    bpmn_png_path = output_dir / "bpmn_model.png"
-    bpmn_svg_path = output_dir / "bpmn_model.svg"
-    process_tree_path = output_dir / "process_tree.ptml"
-    process_tree_png_path = output_dir / "process_tree.png"
-    process_tree_svg_path = output_dir / "process_tree.svg"
-    petri_net_path = output_dir / "petri_net.pnml"
-    petri_net_png_path = output_dir / "petri_net.png"
-    petri_net_svg_path = output_dir / "petri_net.svg"
-    report_path = output_dir / "process_model_report.txt"
+    bpmn_path = output_dir / f"process_model_{model_run_name}.bpmn"
+    bpmn_png_path = output_dir / f"bpmn_model_{model_run_name}.png"
+    bpmn_svg_path = output_dir / f"bpmn_model_{model_run_name}.svg"
+    process_tree_path = output_dir / f"process_tree_{model_run_name}.ptml"
+    process_tree_png_path = output_dir / f"process_tree_{model_run_name}.png"
+    process_tree_svg_path = output_dir / f"process_tree_{model_run_name}.svg"
+    petri_net_path = output_dir / f"petri_net_{model_run_name}.pnml"
+    petri_net_png_path = output_dir / f"petri_net_{model_run_name}.png"
+    petri_net_svg_path = output_dir / f"petri_net_{model_run_name}.svg"
+    report_path = output_dir / f"process_model_report_{model_run_name}.txt"
 
     export_bpmn(bpmn_model, bpmn_path, bpmn_png_path, bpmn_svg_path)
     export_process_tree(process_tree, process_tree_path, process_tree_png_path, process_tree_svg_path)
@@ -268,7 +299,8 @@ def main() -> None:
     )
     write_report(
         report_path,
-        xes_path,
+        event_log_path,
+        model_run_name,
         CASE_ID_COLUMN,
         args.noise_threshold,
         args.use_activity_codes,
@@ -288,9 +320,10 @@ def main() -> None:
         petri_net,
     )
 
-    print(f"Process model discovery completed for '{xes_path}'.")
+    print(f"Process model discovery completed for '{event_log_path}'.")
     print(f"Outputs saved in '{output_dir}'.")
     print(f"Discovery algorithm: '{DISCOVERY_ALGORITHM}'")
+    print(f"Process model run name: {model_run_name}")
     print(f"Noise threshold: {args.noise_threshold}")
     print(f"Use activity codes: {args.use_activity_codes}")
     if args.use_activity_codes:
