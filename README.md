@@ -72,15 +72,14 @@ uv run python basic_analysis.py "logs/Sepsis Cases - Event Log.xes" `
   --head 10
 ```
 
-Example with custom output paths:
+Example with the default output paths:
 
 ```powershell
 uv run python basic_analysis.py "logs/RequestForPayment.xes" `
-  --case-id "case:concept:name" `
-  --output-dir "results/RequestForPayment_analysis" `
-  --csv-output "results/RequestForPayment_analysis/RequestForPayment.csv" `
-  --report-output "results/RequestForPayment_analysis/analysis_report.txt"
+  --case-id "case:concept:name"
 ```
+
+This writes to `results/RequestForPayment_analysis/`, including `RequestForPayment.csv` and `analysis_report.txt`. Use `--output-dir`, `--csv-output`, or `--report-output` only when you want to override those defaults.
 
 ### 2. Advanced Analysis
 
@@ -191,6 +190,17 @@ Use this when you want to discover and export a BPMN model, process tree, and Pe
 uv run python process_model.py "logs/RequestForPayment.xes"
 ```
 
+The script uses these default process-mining columns unless you override them:
+
+```powershell
+uv run python process_model.py "logs/RequestForPayment.xes" `
+  --case-id "case:concept:name" `
+  --activity "concept:name" `
+  --timestamp "time:timestamp"
+```
+
+If your log uses different column names, replace the values of `--case-id`, `--activity`, and `--timestamp` with the exact column names from your file.
+
 CSV input works the same way when the required process-mining columns are present:
 
 ```powershell
@@ -200,10 +210,11 @@ uv run python process_model.py "logs/BPIChallenge2019_3WayMatchingEC.csv"
 What it does:
 
 - Reads an XES or CSV event log.
-- Requires these columns:
+- Uses these default columns:
   - `case:concept:name`
   - `concept:name`
   - `time:timestamp`
+- Allows custom case ID, activity, and timestamp column names with `--case-id`, `--activity`, and `--timestamp`.
 - Discovers a process tree using Inductive Miner.
 - Discovers a BPMN model using Inductive Miner.
 - Discovers a Petri net using Inductive Miner.
@@ -236,6 +247,9 @@ Parameters:
 | `event_log_path` | Yes | None | Path to the input `.xes` or `.csv` event log. |
 | `--output-dir` | No | `results/<xes file stem>_process_model` | Directory where all process-model outputs are saved. |
 | `--noise-threshold` | No | `0.2` | Noise threshold for Inductive Miner. Higher values usually produce simpler models. |
+| `--case-id` | No | `case:concept:name` | Column to use as the case identifier. |
+| `--activity` | No | `concept:name` | Column to use as the activity label. |
+| `--timestamp` | No | `time:timestamp` | Column to use as the event timestamp. |
 | `--use-activity-codes` | No | `false` | Use `true` to replace activity names with short codes in exported models and images. |
 
 Example with activity codes:
@@ -252,6 +266,16 @@ Example with a simpler model:
 ```powershell
 uv run python process_model.py "logs/Sepsis Cases - Event Log.xes" `
   --noise-threshold 0.4
+```
+
+Example with custom column names from another log:
+
+```powershell
+uv run python process_model.py "logs/LoanApp_simplified_train.csv" `
+  --case-id "case_id" `
+  --activity "activity" `
+  --timestamp "start_time" `
+  --noise-threshold 0.2
 ```
 
 ## Suggested Workflow
